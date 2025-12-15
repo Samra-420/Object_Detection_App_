@@ -1,5 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
 
-    <style name="Theme.Object_Detection_App" parent="android:Theme.Material.Light.NoActionBar" />
+    <!-- Main App Theme -->
+    <style name="Theme.Object_Detection_App"
+        parent="Theme.MaterialComponents.Light.NoActionBar">
+
+        <!-- Primary Colors -->
+        <item name="colorPrimary">#000000</item>
+        <item name="colorPrimaryVariant">#000000</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+
+        <!-- Background & Text -->
+        <item name="android:windowBackground">#FFFFFF</item>
+        <item name="android:textColorPrimary">#000000</item>
+
+        <!-- Accessibility -->
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:forceDarkAllowed">false</item>
+
+    </style>
+
 </resources>
