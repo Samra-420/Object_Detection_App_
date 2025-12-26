@@ -1,99 +1,124 @@
 package com.example.object_detection_app;
 
+import android.Manifest;
+import android.content.pm.PackageManager;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.widget.TextView;
-import android.widget.Toast;
+
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.camera.core.CameraSelector;
+import androidx.camera.core.Preview;
+import androidx.camera.lifecycle.ProcessCameraProvider;
+import androidx.camera.view.PreviewView;
+import androidx.core.app.ActivityCompat;
+import androidx.core.content.ContextCompat;
+
+import com.google.common.util.concurrent.ListenableFuture;
+
 import java.util.Locale;
 
 public class CameraActivity extends AppCompatActivity {
 
-    private TextToSpeech textToSpeech;
+    private PreviewView previewView;
     private TextView tvStatus;
+    private TextToSpeech tts;
+
+    private static final int CAMERA_PERMISSION_CODE = 100;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_camera);
 
+        previewView = findViewById(R.id.previewView);
         tvStatus = findViewById(R.id.tvStatus);
 
-        // Initialize Text-to-Speech
-        textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS) {
-                    textToSpeech.setLanguage(Locale.US);
+        initTTS();
+        checkCameraPermission();
+    }
 
-                    // Speak welcome message
-                    String message = "Object detection screen opened. " +
-                            "This app will detect objects using AI. " +
-                            "Camera implementation in progress.";
-                    speak(message);
-
-                    // Update status
-                    tvStatus.setText("Object Detection Ready\n\n" +
-                            "Demo Mode Active\n" +
-                            "Detecting objects...");
-
-                    // Start object detection simulation
-                    startDetectionSimulation();
-
-                } else {
-                    Toast.makeText(CameraActivity.this,
-                            "Text-to-Speech failed", Toast.LENGTH_SHORT).show();
-                }
+    private void initTTS() {
+        tts = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                tts.setLanguage(Locale.US);
+                speak("Live camera started. Object detection will begin shortly.");
+                tvStatus.setText("Live Camera Started");
             }
         });
     }
 
-    private void startDetectionSimulation() {
-        // Array of objects to detect
-        final String[] objects = {
-                "Person", "Chair", "Table", "Laptop",
-                "Mobile Phone", "Book", "Bottle", "Cup"
-        };
+    private void checkCameraPermission() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA)
+                == PackageManager.PERMISSION_GRANTED) {
+            startCamera();
+        } else {
+            ActivityCompat.requestPermissions(
+                    this,
+                    new String[]{Manifest.permission.CAMERA},
+                    CAMERA_PERMISSION_CODE
+            );
+        }
+    }
 
-        // Simulate detection every 3 seconds
-        new android.os.Handler().postDelayed(new Runnable() {
-            int count = 0;
+    private void startCamera() {
+        ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
+                ProcessCameraProvider.getInstance(this);
 
-            @Override
-            public void run() {
-                // Get random object
-                String detectedObject = objects[count % objects.length];
-                int confidence = 75 + (int)(Math.random() * 20); // 75-95% confidence
+        cameraProviderFuture.addListener(() -> {
+            try {
+                ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
 
-                // Update UI
-                String statusText = "Detected: " + detectedObject +
-                        "\nConfidence: " + confidence + "%" +
-                        "\n\nDetection active...";
-                tvStatus.setText(statusText);
+                Preview preview = new Preview.Builder()
+                        .setTargetRotation(previewView.getDisplay().getRotation())
+                        .build();
 
-                // Speak detection (every other detection)
-                if (count % 2 == 0) {
-                    speak(detectedObject + " detected ahead");
-                }
+                preview.setSurfaceProvider(previewView.getSurfaceProvider());
 
-                count++;
+                CameraSelector cameraSelector =
+                        CameraSelector.DEFAULT_BACK_CAMERA;
 
-                // Repeat every 3 seconds
-                new android.os.Handler().postDelayed(this, 3000);
+                cameraProvider.unbindAll();
+                cameraProvider.bindToLifecycle(
+                        this,
+                        cameraSelector,
+                        preview
+                );
+
+            } catch (Exception e) {
+                e.printStackTrace();
             }
-        }, 1000);
+        }, ContextCompat.getMainExecutor(this));
     }
 
     private void speak(String text) {
-        if (textToSpeech != null) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, null);
+        if (tts != null) {
+            tts.speak(text, TextToSpeech.QUEUE_FLUSH, null, null);
+        }
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode,
+                                           @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+
+        if (requestCode == CAMERA_PERMISSION_CODE) {
+            if (grantResults.length > 0 &&
+                    grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                startCamera();
+            } else {
+                tvStatus.setText("Camera permission required");
+                speak("Camera permission is required to start detection");
+            }
         }
     }
 
     @Override
     protected void onDestroy() {
-        if (textToSpeech != null) {
-            textToSpeech.shutdown();
+        if (tts != null) {
+            tts.shutdown();
         }
         super.onDestroy();
     }
