@@ -4,7 +4,6 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.view.View;
-import android.widget.Toast;
 import androidx.appcompat.app.AppCompatActivity;
 import com.google.android.material.card.MaterialCardView;
 import java.util.Locale;
@@ -13,7 +12,6 @@ public class MainActivity extends AppCompatActivity {
 
     private MaterialCardView btnStart;
     private TextToSpeech textToSpeech;
-    private boolean isSpeaking = false;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -28,16 +26,13 @@ public class MainActivity extends AppCompatActivity {
             public void onInit(int status) {
                 if (status == TextToSpeech.SUCCESS) {
                     textToSpeech.setLanguage(Locale.US);
-                    // Set utterance listener to detect when speech finishes
+                    // Set utterance listener
                     textToSpeech.setOnUtteranceProgressListener(new android.speech.tts.UtteranceProgressListener() {
                         @Override
-                        public void onStart(String utteranceId) {
-                            isSpeaking = true;
-                        }
+                        public void onStart(String utteranceId) {}
 
                         @Override
                         public void onDone(String utteranceId) {
-                            isSpeaking = false;
                             // Navigate to CameraActivity AFTER speech completes
                             runOnUiThread(new Runnable() {
                                 @Override
@@ -50,7 +45,6 @@ public class MainActivity extends AppCompatActivity {
 
                         @Override
                         public void onError(String utteranceId) {
-                            isSpeaking = false;
                             // Navigate even if there's an error
                             runOnUiThread(new Runnable() {
                                 @Override
@@ -65,7 +59,6 @@ public class MainActivity extends AppCompatActivity {
             }
         });
 
-        // Setup button click listener
         setupButtonListeners();
     }
 
@@ -82,7 +75,6 @@ public class MainActivity extends AppCompatActivity {
         btnStart.setOnLongClickListener(new View.OnLongClickListener() {
             @Override
             public boolean onLongClick(View v) {
-                // Different message for long press
                 speak("Welcome to Vision Assistant. Tap once to start object detection.");
                 return true;
             }
@@ -91,9 +83,7 @@ public class MainActivity extends AppCompatActivity {
 
     private void speak(String text) {
         if (textToSpeech != null) {
-            // Stop any ongoing speech first
             textToSpeech.stop();
-            // Speak the text with utterance ID
             textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, "speech_complete");
         }
     }

@@ -37,7 +37,9 @@
         <activity
             android:name=".CameraActivity"
             android:screenOrientation="portrait"
-            android:exported="false" />
+            android:exported="false"
+            android:theme="@style/Theme.Object_Detection_App" />
+
 
     </application>
 
