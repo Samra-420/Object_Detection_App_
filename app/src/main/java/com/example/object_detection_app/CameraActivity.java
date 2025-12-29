@@ -1,15 +1,18 @@
 package com.example.object_detection_app;
 
 import android.Manifest;
-import android.annotation.SuppressLint;
-import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageFormat;
+import android.graphics.Matrix;
+import android.graphics.Rect;
+import android.graphics.YuvImage;
+import android.media.Image;
 import android.os.Bundle;
 import android.speech.tts.TextToSpeech;
 import android.util.Log;
 import android.util.Size;
-import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -29,35 +32,53 @@ import androidx.core.content.ContextCompat;
 
 import com.google.common.util.concurrent.ListenableFuture;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.util.ArrayList;
+import java.nio.ByteBuffer;
 import java.util.Collections;
-import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Set;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+@OptIn(markerClass = ExperimentalGetImage.class)
 public class CameraActivity extends AppCompatActivity {
     private static final String TAG = "CameraActivity";
     private static final int PERMISSION_REQUEST_CAMERA = 101;
 
+    // UI Components
     private PreviewView previewView;
     private TextView resultTextView;
+    private TextView statusTextView;
+    private TextView historyTextView;
     private Button toggleButton;
     private Button backButton;
     private Button debugButton;
-    private TextView statusTextView;
 
+    // Camera & Detection
     private ExecutorService cameraExecutor;
     private ObjectDetector objectDetector;
-    private TextToSpeech textToSpeech;
 
+    // TTS
+    private TextToSpeech textToSpeech;
+    private boolean isVoiceEnabled = true;
+    private boolean isTTSReady = false;
+
+    // State
     private boolean isDetecting = false;
-    private String lastSpokenResult = "";
-    private List<String> detectionHistory = new ArrayList<>();
+    private Set<String> detectedObjects = new HashSet<>();
     private int detectionCount = 0;
+    private long lastDetectionTime = 0;
+    private static final long DETECTION_COOLDOWN = 1500; // 1.5 seconds
+    private float confidenceThreshold = 0.50f;
+
+    // Voice control
+    private String lastSpokenObject = "";
+    private long lastSpeechTime = 0;
+    private static final long SPEECH_COOLDOWN = 3000; // 3 seconds between same object announcement
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -65,20 +86,9 @@ public class CameraActivity extends AppCompatActivity {
         setContentView(R.layout.activity_camera);
 
         initializeViews();
-        setupClickListeners();
-
-        // Initialize Object Detector
-        initializeObjectDetector();
-
-        // Initialize Text-to-Speech
-        initializeTextToSpeech();
-
-        // Check camera permission
-        if (allPermissionsGranted()) {
-            startCamera();
-        } else {
-            requestCameraPermission();
-        }
+        setupButtons();
+        initializeTTS();
+        checkPermissions();
 
         cameraExecutor = Executors.newSingleThreadExecutor();
     }
@@ -86,71 +96,48 @@ public class CameraActivity extends AppCompatActivity {
     private void initializeViews() {
         previewView = findViewById(R.id.preview_view);
         resultTextView = findViewById(R.id.result_text);
+        statusTextView = findViewById(R.id.status_text);
+        historyTextView = findViewById(R.id.history_text);
         toggleButton = findViewById(R.id.toggle_button);
         backButton = findViewById(R.id.back_button);
         debugButton = findViewById(R.id.debug_button);
-        statusTextView = findViewById(R.id.status_text);
-
-        // Set initial text
-        statusTextView.setText("Camera initializing...");
-        resultTextView.setText("Press 'Start Detection' to begin");
     }
 
-    private void setupClickListeners() {
-        toggleButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                toggleDetection();
-            }
-        });
-
-        backButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                finish();
-            }
-        });
-
-        debugButton.setOnClickListener(new View.OnClickListener() {
-            @Override
-            public void onClick(View v) {
-                showDebugInfo();
-            }
-        });
+    private void setupButtons() {
+        backButton.setOnClickListener(v -> finish());
+        debugButton.setOnClickListener(v -> showDebugInfo());
+        toggleButton.setOnClickListener(v -> toggleDetection());
     }
 
-    private void initializeObjectDetector() {
-        try {
-            objectDetector = new ObjectDetector(this);
-            statusTextView.setText("✅ Model loaded successfully");
-            speak("Object detection model loaded successfully");
-        } catch (IOException e) {
-            Log.e(TAG, "Failed to initialize object detector", e);
-            statusTextView.setText("❌ Failed to load model");
-            Toast.makeText(this, "Failed to load detection model", Toast.LENGTH_LONG).show();
-            speak("Failed to load detection model. Please check your model files.");
-        }
-    }
-
-    private void initializeTextToSpeech() {
-        textToSpeech = new TextToSpeech(this, new TextToSpeech.OnInitListener() {
-            @Override
-            public void onInit(int status) {
-                if (status == TextToSpeech.SUCCESS) {
-                    int result = textToSpeech.setLanguage(Locale.US);
-                    if (result == TextToSpeech.LANG_MISSING_DATA ||
-                            result == TextToSpeech.LANG_NOT_SUPPORTED) {
-                        Log.e(TAG, "Text-to-Speech language not supported");
-                        statusTextView.setText("⚠️ TTS language not supported");
-                    } else {
-                        Log.d(TAG, "Text-to-Speech initialized successfully");
-                    }
+    private void initializeTTS() {
+        textToSpeech = new TextToSpeech(this, status -> {
+            if (status == TextToSpeech.SUCCESS) {
+                int result = textToSpeech.setLanguage(Locale.US);
+                if (result == TextToSpeech.LANG_MISSING_DATA ||
+                        result == TextToSpeech.LANG_NOT_SUPPORTED) {
+                    Log.e(TAG, "TTS language not supported");
+                    isVoiceEnabled = false;
+                    isTTSReady = false;
                 } else {
-                    Log.e(TAG, "Text-to-Speech initialization failed");
-                    statusTextView.setText("⚠️ TTS initialization failed");
+                    isTTSReady = true;
+                    // Set speech rate slightly faster for better experience
+                    textToSpeech.setSpeechRate(1.0f);
+                    Log.d(TAG, "✅ TTS initialized successfully");
                 }
+            } else {
+                Log.e(TAG, "TTS initialization failed");
+                isVoiceEnabled = false;
+                isTTSReady = false;
             }
         });
+    }
+
+    private void checkPermissions() {
+        if (allPermissionsGranted()) {
+            initializeDetector();
+        } else {
+            requestCameraPermission();
+        }
     }
 
     private boolean allPermissionsGranted() {
@@ -170,240 +157,277 @@ public class CameraActivity extends AppCompatActivity {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         if (requestCode == PERMISSION_REQUEST_CAMERA) {
             if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                startCamera();
-                speak("Camera permission granted. Starting camera.");
+                initializeDetector();
             } else {
-                statusTextView.setText("❌ Camera permission denied");
-                Toast.makeText(this, "Camera permission is required", Toast.LENGTH_SHORT).show();
-                speak("Camera permission is required to use this app.");
+                Toast.makeText(this, "Camera permission required", Toast.LENGTH_SHORT).show();
                 finish();
             }
         }
     }
 
+    private void initializeDetector() {
+        try {
+            statusTextView.setText("Loading model...");
+            objectDetector = new ObjectDetector(this);
+            statusTextView.setText("Model loaded • Ready to detect");
+            startCamera();
+        } catch (IOException e) {
+            statusTextView.setText("Model load failed");
+            Log.e(TAG, "Model load failed", e);
+            Toast.makeText(this, "Failed to load detection model", Toast.LENGTH_LONG).show();
+        }
+    }
+
     private void startCamera() {
+        if (objectDetector == null) {
+            statusTextView.setText("Model not loaded");
+            return;
+        }
+
         ListenableFuture<ProcessCameraProvider> cameraProviderFuture =
                 ProcessCameraProvider.getInstance(this);
 
         cameraProviderFuture.addListener(() -> {
             try {
                 ProcessCameraProvider cameraProvider = cameraProviderFuture.get();
-
-                // Preview
-                Preview preview = new Preview.Builder()
-                        .setTargetResolution(new Size(640, 480))
-                        .build();
-                preview.setSurfaceProvider(previewView.getSurfaceProvider());
-
-                // Camera selector (use back camera)
-                CameraSelector cameraSelector = new CameraSelector.Builder()
-                        .requireLensFacing(CameraSelector.LENS_FACING_BACK)
-                        .build();
-
-                // Image analysis for object detection
-                ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
-                        .setTargetResolution(new Size(640, 480))
-                        .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
-                        .build();
-
-                imageAnalysis.setAnalyzer(cameraExecutor, new ImageAnalysis.Analyzer() {
-                    @OptIn(markerClass = ExperimentalGetImage.class)
-                    @Override
-                    public void analyze(@NonNull ImageProxy imageProxy) {
-                        if (!isDetecting || objectDetector == null) {
-                            imageProxy.close();
-                            return;
-                        }
-
-                        @SuppressLint("UnsafeOptInUsageError")
-                        android.media.Image image = imageProxy.getImage();
-                        if (image != null) {
-                            Bitmap bitmap = ImageUtils.imageToBitmap(image);
-                            if (bitmap != null) {
-                                // Run object detection
-                                List<ObjectDetector.Recognition> recognitions =
-                                        objectDetector.recognizeImage(bitmap);
-
-                                // Process results on UI thread
-                                runOnUiThread(() -> {
-                                    handleDetectionResults(recognitions);
-                                    updateDetectionCount();
-                                });
-                            }
-                        }
-                        imageProxy.close();
-                    }
-                });
-
-                // Bind use cases to camera
-                cameraProvider.unbindAll();
-                cameraProvider.bindToLifecycle(
-                        this,
-                        cameraSelector,
-                        preview,
-                        imageAnalysis);
-
-                statusTextView.setText("✅ Camera ready");
-                speak("Camera ready. Point at objects and press start detection.");
-
+                bindCamera(cameraProvider);
             } catch (ExecutionException | InterruptedException e) {
-                Log.e(TAG, "Camera initialization failed", e);
-                statusTextView.setText("❌ Camera initialization failed");
-                speak("Failed to initialize camera.");
+                Log.e(TAG, "Camera init failed", e);
+                statusTextView.setText("Camera init failed");
+                Toast.makeText(this, "Camera initialization failed", Toast.LENGTH_SHORT).show();
             }
         }, ContextCompat.getMainExecutor(this));
     }
 
+    private void bindCamera(ProcessCameraProvider cameraProvider) {
+        Preview preview = new Preview.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .build();
+        preview.setSurfaceProvider(previewView.getSurfaceProvider());
+
+        CameraSelector cameraSelector = new CameraSelector.Builder()
+                .requireLensFacing(CameraSelector.LENS_FACING_BACK)
+                .build();
+
+        ImageAnalysis imageAnalysis = new ImageAnalysis.Builder()
+                .setTargetResolution(new Size(640, 480))
+                .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
+                .build();
+
+        imageAnalysis.setAnalyzer(cameraExecutor, this::analyzeImage);
+
+        try {
+            cameraProvider.unbindAll();
+            cameraProvider.bindToLifecycle(this, cameraSelector, preview, imageAnalysis);
+            statusTextView.setText("Camera ready • Press Start Detection");
+        } catch (Exception e) {
+            Log.e(TAG, "Camera binding failed", e);
+            statusTextView.setText("Camera binding failed");
+        }
+    }
+
+    private void analyzeImage(@NonNull ImageProxy imageProxy) {
+        try {
+            if (!isDetecting || objectDetector == null) {
+                imageProxy.close();
+                return;
+            }
+
+            long now = System.currentTimeMillis();
+            if (now - lastDetectionTime < DETECTION_COOLDOWN) {
+                imageProxy.close();
+                return;
+            }
+
+            Image image = imageProxy.getImage();
+            if (image != null) {
+                Bitmap bitmap = imageToBitmap(image);
+                if (bitmap != null) {
+                    // Resize bitmap to match model input size (300x300)
+                    Bitmap resizedBitmap = Bitmap.createScaledBitmap(bitmap, 300, 300, true);
+
+                    try {
+                        List<ObjectDetector.Recognition> recognitions =
+                                objectDetector.recognizeImage(resizedBitmap);
+                        lastDetectionTime = now;
+                        runOnUiThread(() -> handleDetectionResults(recognitions));
+                    } catch (Exception e) {
+                        Log.e(TAG, "Detection failed", e);
+                        runOnUiThread(() -> statusTextView.setText("Detection error"));
+                    } finally {
+                        if (resizedBitmap != bitmap) {
+                            resizedBitmap.recycle();
+                        }
+                        bitmap.recycle();
+                    }
+                }
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Image analysis error", e);
+        } finally {
+            imageProxy.close();
+        }
+    }
+
+    private Bitmap imageToBitmap(Image image) {
+        try {
+            if (image.getFormat() == ImageFormat.YUV_420_888) {
+                ByteBuffer yBuffer = image.getPlanes()[0].getBuffer();
+                ByteBuffer uBuffer = image.getPlanes()[1].getBuffer();
+                ByteBuffer vBuffer = image.getPlanes()[2].getBuffer();
+
+                int ySize = yBuffer.remaining();
+                int uSize = uBuffer.remaining();
+                int vSize = vBuffer.remaining();
+
+                byte[] nv21 = new byte[ySize + uSize + vSize];
+                yBuffer.get(nv21, 0, ySize);
+                vBuffer.get(nv21, ySize, vSize);
+                uBuffer.get(nv21, ySize + vSize, uSize);
+
+                YuvImage yuvImage = new YuvImage(nv21, ImageFormat.NV21,
+                        image.getWidth(), image.getHeight(), null);
+                ByteArrayOutputStream out = new ByteArrayOutputStream();
+                yuvImage.compressToJpeg(new Rect(0, 0, image.getWidth(),
+                        image.getHeight()), 90, out);
+                byte[] bytes = out.toByteArray();
+                return BitmapFactory.decodeByteArray(bytes, 0, bytes.length);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Image conversion error", e);
+        }
+        return null;
+    }
+
     private void toggleDetection() {
+        if (objectDetector == null) {
+            Toast.makeText(this, "Model not loaded yet", Toast.LENGTH_SHORT).show();
+            return;
+        }
+
         isDetecting = !isDetecting;
         if (isDetecting) {
             toggleButton.setText("Stop Detection");
-            toggleButton.setBackgroundColor(getResources().getColor(android.R.color.holo_red_dark));
-            statusTextView.setText("🔍 Detecting objects...");
-            speak("Object detection started. Point camera at objects.");
-
-            // Reset detection history
-            detectionHistory.clear();
+            toggleButton.setBackgroundTintList(
+                    getResources().getColorStateList(android.R.color.holo_red_dark));
+            statusTextView.setText("🔴 Detecting...");
+            detectedObjects.clear();
             detectionCount = 0;
-            resultTextView.setText("Starting detection...\n");
+            lastSpokenObject = "";
+            resultTextView.setText("Scanning for objects...");
+            historyTextView.setText("");
         } else {
             toggleButton.setText("Start Detection");
-            toggleButton.setBackgroundColor(getResources().getColor(android.R.color.holo_green_dark));
+            toggleButton.setBackgroundTintList(
+                    getResources().getColorStateList(android.R.color.holo_green_dark));
             statusTextView.setText("⏸️ Detection paused");
-            resultTextView.setText("Detection paused\n" + resultTextView.getText());
-            speak("Detection stopped. Detected " + detectionCount + " objects.");
         }
     }
 
     private void handleDetectionResults(List<ObjectDetector.Recognition> recognitions) {
-        if (recognitions.isEmpty()) {
-            if (detectionCount == 0) {
-                resultTextView.setText("No objects detected\nPoint camera at objects");
-            }
+        if (objectDetector == null) {
+            return;
+        }
+
+        if (recognitions == null || recognitions.isEmpty()) {
+            resultTextView.setText("No objects detected\n\nPoint camera at common objects like:\n• Person\n• Chair, Table\n• Laptop, Phone\n• Cup, Bottle");
             return;
         }
 
         // Sort by confidence (highest first)
-        Collections.sort(recognitions, new Comparator<ObjectDetector.Recognition>() {
-            @Override
-            public int compare(ObjectDetector.Recognition r1, ObjectDetector.Recognition r2) {
-                return Float.compare(r2.getConfidence(), r1.getConfidence());
-            }
-        });
+        Collections.sort(recognitions, (r1, r2) ->
+                Float.compare(r2.getConfidence(), r1.getConfidence()));
 
-        // Build display text
-        StringBuilder displayText = new StringBuilder();
-        StringBuilder speechText = new StringBuilder();
+        // Get the MOST CONFIDENT object only
+        ObjectDetector.Recognition topRecognition = recognitions.get(0);
 
-        displayText.append("🎯 Detected Objects:\n\n");
-        speechText.append("Detected ");
-
-        int count = 0;
-        float totalConfidence = 0;
-
-        for (int i = 0; i < Math.min(5, recognitions.size()); i++) {
-            ObjectDetector.Recognition recognition = recognitions.get(i);
-            float confidence = recognition.getConfidence();
-
-            if (confidence >= 0.15f) { // 15% confidence threshold
-                String objectName = recognition.getTitle();
-                float confidencePercent = confidence * 100;
-
-                displayText.append(String.format("• %s: %.1f%%\n", objectName, confidencePercent));
-
-                if (count > 0) {
-                    speechText.append(", ");
-                }
-                speechText.append(objectName);
-
-                // Add to history (avoid duplicates)
-                if (!detectionHistory.contains(objectName)) {
-                    detectionHistory.add(objectName);
-                }
-
-                totalConfidence += confidence;
-                count++;
-            }
-        }
-
-        if (count == 0) {
-            displayText.append("No confident detections\n(confidence < 15%)");
+        if (topRecognition.getConfidence() < confidenceThreshold) {
+            resultTextView.setText("No confident detections\n\nMove closer or improve lighting");
             return;
         }
 
-        // Add statistics
-        float avgConfidence = totalConfidence / count;
-        displayText.append(String.format("\n📊 Detected %d objects (Avg confidence: %.1f%%)",
-                count, avgConfidence));
+        // Build display text with TOP object highlighted
+        StringBuilder displayText = new StringBuilder();
+        displayText.append("🎯 PRIMARY DETECTION:\n\n");
 
-        // Add history
-        if (!detectionHistory.isEmpty()) {
-            displayText.append("\n\n📋 History: ");
-            for (int i = 0; i < Math.min(5, detectionHistory.size()); i++) {
-                displayText.append(detectionHistory.get(i));
-                if (i < Math.min(5, detectionHistory.size()) - 1) {
-                    displayText.append(", ");
+        String topObjectName = topRecognition.getTitle().replace("_", " ");
+        displayText.append(String.format("📍 %s\n   Confidence: %.1f%%\n\n",
+                topObjectName.toUpperCase(),
+                topRecognition.getConfidence() * 100));
+
+        // Add other detections
+        if (recognitions.size() > 1) {
+            displayText.append("Other objects:\n");
+            for (int i = 1; i < Math.min(recognitions.size(), 4); i++) {
+                ObjectDetector.Recognition rec = recognitions.get(i);
+                if (rec.getConfidence() >= confidenceThreshold) {
+                    String name = rec.getTitle().replace("_", " ");
+                    displayText.append(String.format("  • %s (%.1f%%)\n",
+                            name, rec.getConfidence() * 100));
                 }
             }
         }
 
         resultTextView.setText(displayText.toString());
 
-        // Speak results if different from last time
-        String currentResult = speechText.toString();
-        if (!currentResult.equals(lastSpokenResult) && count > 0) {
-            String speech = speechText + ". " + count + " objects detected.";
-            speak(speech);
-            lastSpokenResult = currentResult;
+        // Update statistics
+        for (ObjectDetector.Recognition rec : recognitions) {
+            if (rec.getConfidence() >= confidenceThreshold) {
+                detectedObjects.add(rec.getTitle());
+                detectionCount++;
+            }
         }
+        historyTextView.setText("Total: " + detectedObjects.size() + " unique | " +
+                detectionCount + " detections");
 
-        detectionCount += count;
+        // VOICE ANNOUNCEMENT - Only speak the TOP object
+        speakTopObject(topObjectName, topRecognition.getConfidence());
     }
 
-    private void updateDetectionCount() {
-        String status = isDetecting ?
-                "🔍 Detecting... | Total: " + detectionCount + " objects" :
-                "⏸️ Paused | Total: " + detectionCount + " objects";
-        statusTextView.setText(status);
+    private void speakTopObject(String objectName, float confidence) {
+        if (!isVoiceEnabled || !isTTSReady || textToSpeech == null) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
+
+        // Only speak if:
+        // 1. Different object than last time OR
+        // 2. Same object but enough time has passed (to avoid spam)
+        if (!objectName.equals(lastSpokenObject) ||
+                (now - lastSpeechTime) > SPEECH_COOLDOWN) {
+
+            // Create natural speech
+            String speech = objectName;
+
+            // Add confidence level for very high confidence
+            if (confidence >= 0.80f) {
+                speech = objectName + " detected";
+            } else if (confidence >= 0.60f) {
+                speech = "I see " + objectName;
+            }
+
+            // Speak it
+            textToSpeech.speak(speech, TextToSpeech.QUEUE_FLUSH, null, null);
+
+            lastSpokenObject = objectName;
+            lastSpeechTime = now;
+
+            Log.d(TAG, "🔊 Speaking: " + speech);
+        }
     }
 
     private void showDebugInfo() {
-        String debugInfo = "📱 Object Detection Debug Info\n\n" +
-                "Model: COCO SSD MobileNet V1\n" +
-                "Input Size: 300x300\n" +
-                "Labels: " + (objectDetector != null ? objectDetector.getLabelsCount() : "Unknown") + " classes\n" +
-                "Detection Mode: " + (isDetecting ? "Active" : "Inactive") + "\n" +
+        String modelStatus = (objectDetector != null) ? "Loaded" : "Not Loaded";
+        String ttsStatus = isTTSReady ? "Ready" : "Not Ready";
+        String debug = "Model: " + modelStatus + "\n" +
+                "TTS: " + ttsStatus + "\n" +
+                "Detection: " + (isDetecting ? "Active" : "Inactive") + "\n" +
+                "Unique Objects: " + detectedObjects.size() + "\n" +
                 "Total Detections: " + detectionCount + "\n" +
-                "Unique Objects: " + detectionHistory.size() + "\n" +
-                "\nCommon objects to detect:\n" +
-                "• Person\n• Cell Phone\n• Bottle\n• Laptop\n• Chair\n• Book\n• TV";
-
-        new android.app.AlertDialog.Builder(this)
-                .setTitle("Debug Information")
-                .setMessage(debugInfo)
-                .setPositiveButton("OK", null)
-                .show();
-
-        speak("Showing debug information. " + detectionCount + " total detections, " +
-                detectionHistory.size() + " unique objects.");
-    }
-
-    private void speak(String text) {
-        if (textToSpeech != null && !textToSpeech.isSpeaking()) {
-            textToSpeech.speak(text, TextToSpeech.QUEUE_FLUSH, null, null);
-        }
-    }
-
-    @Override
-    protected void onPause() {
-        super.onPause();
-        if (textToSpeech != null) {
-            textToSpeech.stop();
-        }
-        if (isDetecting) {
-            isDetecting = false;
-            toggleButton.setText("Start Detection");
-        }
+                "Confidence: " + (confidenceThreshold * 100) + "%" + "\n" +
+                "Last Spoken: " + (lastSpokenObject.isEmpty() ? "None" : lastSpokenObject);
+        Toast.makeText(this, debug, Toast.LENGTH_LONG).show();
     }
 
     @Override
@@ -418,6 +442,18 @@ public class CameraActivity extends AppCompatActivity {
         }
         if (cameraExecutor != null) {
             cameraExecutor.shutdown();
+        }
+    }
+
+    @Override
+    protected void onPause() {
+        super.onPause();
+        if (isDetecting) {
+            toggleDetection();
+        }
+        // Stop any ongoing speech
+        if (textToSpeech != null && isTTSReady) {
+            textToSpeech.stop();
         }
     }
 }

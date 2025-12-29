@@ -2,73 +2,69 @@
 <androidx.constraintlayout.widget.ConstraintLayout
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
-    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="@drawable/gradient_background">
+    android:background="@drawable/light_gradient_background">
 
-    <!-- Logo - Positioned higher -->
-
-    <!-- Text Container - Reduced gap -->
+    <!-- App Logo -->
     <ImageView
         android:id="@+id/imgLogo"
-        android:layout_width="240dp"
-        android:layout_height="194dp"
-        android:contentDescription="Vision Assistant Logo"
-        android:scaleType="centerInside"
+        android:layout_width="180dp"
+        android:layout_height="180dp"
         android:src="@drawable/logo1"
-        app:layout_constraintBottom_toTopOf="@+id/textContainer"
-        app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintHorizontal_bias="0.498"
-        app:layout_constraintStart_toStartOf="parent"
+        android:scaleType="centerInside"
+        android:contentDescription="Vision Assistant logo"
         app:layout_constraintTop_toTopOf="parent"
-        app:layout_constraintVertical_bias="0.475" />
+        app:layout_constraintBottom_toTopOf="@id/textContainer"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintVertical_bias="0.45"/>
 
+    <!-- Text Section -->
     <LinearLayout
         android:id="@+id/textContainer"
-        android:layout_width="318dp"
-        android:layout_height="177dp"
-        android:layout_marginStart="32dp"
-        android:layout_marginEnd="32dp"
-        android:layout_marginBottom="60dp"
-        android:gravity="center"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
         android:orientation="vertical"
+        android:gravity="center"
+        android:padding="16dp"
         app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
-        app:layout_constraintStart_toStartOf="parent">
+        app:layout_constraintWidth_percent="0.85"
+        android:layout_marginBottom="60dp">
 
         <!-- App Name -->
         <TextView
             android:id="@+id/tvAppName"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:fontFamily="sans-serif-medium"
-            android:text="Object Detection Assistant"
-            android:textColor="#00FFFF"
-            android:textSize="22sp"
-            android:textStyle="bold" />
+            android:text="Vision Assistant"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:textColor="#0A2540"
+            android:fontFamily="sans-serif-medium"/>
 
-        <!-- Tagline - Better Color -->
+        <!-- Tagline -->
         <TextView
             android:id="@+id/tvTagline"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
+            android:text="Empowering Vision Through AI"
+            android:textSize="14sp"
+            android:textColor="#455A64"
             android:layout_marginTop="6dp"
-            android:fontFamily="sans-serif-light"
-            android:gravity="center"
-            android:text="Empowering Vision Through Technology"
-            android:textColor="#B0E0FF"
-            android:textSize="13sp" />
+            android:gravity="center"/>
 
-        <!-- Loading Text -->
+        <!-- Loading -->
         <TextView
             android:id="@+id/tvLoading"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="20dp"
             android:text="Loading..."
-            android:textColor="#80D0FF"
-            android:textSize="12sp" />
+            android:textSize="13sp"
+            android:textColor="#607D8B"
+            android:layout_marginTop="18dp"/>
 
     </LinearLayout>
 

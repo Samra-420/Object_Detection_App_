@@ -31,12 +31,11 @@ public class ObjectDetector {
     private static final String LABEL_FILE = "labelmap.txt";
     private static final int INPUT_SIZE = 300;
 
-    // COCO has 91 classes (including background at index 0)
-    private static final int NUM_CLASSES = 91;
+    // COCO SSD MobileNet has 90 classes + background (index 0 = "???")
     private static final int NUM_DETECTIONS = 10;
 
-    // Confidence threshold - LOW for testing
-    private static final float MIN_CONFIDENCE = 0.15f;
+    // Confidence threshold - Lower for better detection
+    private static final float MIN_CONFIDENCE = 0.40f;
 
     private Interpreter tflite;
     private List<String> labels = new ArrayList<>();
@@ -48,37 +47,53 @@ public class ObjectDetector {
     private float[] numDetections;
 
     private ByteBuffer imgData;
+    private boolean isReady = false;
 
     public ObjectDetector(Context context) throws IOException {
-        // Load model
-        MappedByteBuffer modelBuffer = loadModelFile(context);
+        try {
+            // Load model
+            MappedByteBuffer modelBuffer = loadModelFile(context);
 
-        Interpreter.Options options = new Interpreter.Options();
-        options.setNumThreads(4);
-        tflite = new Interpreter(modelBuffer, options);
+            Interpreter.Options options = new Interpreter.Options();
+            options.setNumThreads(4);
 
-        // Load labels
-        labels = loadLabelList(context);
-
-        // Initialize input buffer (quantized model: uint8)
-        imgData = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3);
-        imgData.order(ByteOrder.nativeOrder());
-
-        // Initialize output arrays
-        outputLocations = new float[1][NUM_DETECTIONS][4];
-        outputClasses = new float[1][NUM_DETECTIONS];
-        outputScores = new float[1][NUM_DETECTIONS];
-        numDetections = new float[1];
-
-        Log.d(TAG, "✅ ObjectDetector initialized");
-        Log.d(TAG, "📊 Total labels: " + labels.size());
-
-        // Test: Print some important labels with indices
-        int[] importantIndices = {0, 1, 14, 56, 60, 62, 63, 67, 73};
-        for (int idx : importantIndices) {
-            if (idx < labels.size()) {
-                Log.d(TAG, String.format("Label [%d]: %s", idx, labels.get(idx)));
+            // Enable NNAPI for better performance
+            try {
+                options.setUseNNAPI(true);
+                Log.d(TAG, "✅ NNAPI enabled");
+            } catch (Exception e) {
+                Log.w(TAG, "⚠️ NNAPI not available, using CPU");
             }
+
+            tflite = new Interpreter(modelBuffer, options);
+
+            // Load labels (including "???" at index 0)
+            labels = loadLabelList(context);
+
+            // Initialize input buffer (quantized model: uint8)
+            imgData = ByteBuffer.allocateDirect(INPUT_SIZE * INPUT_SIZE * 3);
+            imgData.order(ByteOrder.nativeOrder());
+
+            // Initialize output arrays
+            outputLocations = new float[1][NUM_DETECTIONS][4];
+            outputClasses = new float[1][NUM_DETECTIONS];
+            outputScores = new float[1][NUM_DETECTIONS];
+            numDetections = new float[1];
+
+            isReady = true;
+
+            Log.d(TAG, "✅ ObjectDetector initialized successfully");
+            Log.d(TAG, "📊 Total labels loaded: " + labels.size());
+            Log.d(TAG, "🎯 Confidence threshold: " + (MIN_CONFIDENCE * 100) + "%");
+
+            // Log first few labels for verification
+            for (int i = 0; i < Math.min(5, labels.size()); i++) {
+                Log.d(TAG, "   Label[" + i + "]: " + labels.get(i));
+            }
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Failed to initialize ObjectDetector", e);
+            throw new IOException("Model initialization failed", e);
         }
     }
 
@@ -88,7 +103,9 @@ public class ObjectDetector {
         FileChannel fileChannel = inputStream.getChannel();
         long startOffset = fileDescriptor.getStartOffset();
         long declaredLength = fileDescriptor.getDeclaredLength();
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
+        MappedByteBuffer buffer = fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength);
+        inputStream.close();
+        return buffer;
     }
 
     private List<String> loadLabelList(Context context) throws IOException {
@@ -97,40 +114,47 @@ public class ObjectDetector {
                 new InputStreamReader(context.getAssets().open(LABEL_FILE)));
         String line;
 
+        // Read ALL lines including "???" at index 0
         while ((line = reader.readLine()) != null) {
-            line = line.trim();
-            if (!line.isEmpty()) {
-                labelList.add(line);
-            }
+            labelList.add(line.trim());
         }
         reader.close();
 
-        // COCO has 91 classes. If we have fewer, pad with placeholder names
-        if (labelList.size() < NUM_CLASSES) {
-            Log.w(TAG, "⚠️ Label file has only " + labelList.size() + " labels, expected " + NUM_CLASSES);
-            for (int i = labelList.size(); i < NUM_CLASSES; i++) {
-                labelList.add("class_" + i);
-            }
-        }
-
+        Log.d(TAG, "📋 Loaded " + labelList.size() + " labels from file");
         return labelList;
     }
 
     public List<Recognition> recognizeImage(Bitmap bitmap) {
-        // Resize to model input
-        Bitmap resizedBitmap = Bitmap.createScaledBitmap(
-                bitmap, INPUT_SIZE, INPUT_SIZE, true);
+        if (!isReady || tflite == null) {
+            Log.e(TAG, "❌ Detector not ready");
+            return new ArrayList<>();
+        }
 
-        // Convert to byte buffer
-        convertBitmapToByteBuffer(resizedBitmap);
+        try {
+            // Resize to model input (300x300)
+            Bitmap resizedBitmap = Bitmap.createScaledBitmap(
+                    bitmap, INPUT_SIZE, INPUT_SIZE, true);
 
-        // Run inference
-        long startTime = SystemClock.elapsedRealtime();
-        runInference();
-        long endTime = SystemClock.elapsedRealtime();
-        Log.d(TAG, "⚡ Inference time: " + (endTime - startTime) + " ms");
+            // Convert to byte buffer
+            convertBitmapToByteBuffer(resizedBitmap);
 
-        return getRecognitions();
+            // Clean up resized bitmap if different from original
+            if (resizedBitmap != bitmap) {
+                resizedBitmap.recycle();
+            }
+
+            // Run inference
+            long startTime = SystemClock.elapsedRealtime();
+            runInference();
+            long endTime = SystemClock.elapsedRealtime();
+            Log.d(TAG, "⚡ Inference time: " + (endTime - startTime) + " ms");
+
+            return getRecognitions();
+
+        } catch (Exception e) {
+            Log.e(TAG, "❌ Recognition failed", e);
+            return new ArrayList<>();
+        }
     }
 
     private void convertBitmapToByteBuffer(Bitmap bitmap) {
@@ -158,20 +182,22 @@ public class ObjectDetector {
 
         tflite.runForMultipleInputsOutputs(inputs, outputs);
 
-        // DEBUG: Log ALL detections
+        // DEBUG: Log all detections for debugging
         int detections = Math.min(NUM_DETECTIONS, (int) numDetections[0]);
-        Log.d(TAG, "🔍 Model returned " + detections + " detections");
+        Log.d(TAG, "🔍 Model returned " + detections + " raw detections");
 
         for (int i = 0; i < detections; i++) {
             float confidence = outputScores[0][i];
             int classId = (int) outputClasses[0][i];
-            String labelName = "unknown";
-            if (classId >= 0 && classId < labels.size()) {
-                labelName = labels.get(classId);
-            }
 
-            if (confidence > 0.05f) { // Log all >5% confidence
-                Log.d(TAG, String.format("  [%d] Class=%d (%s) Conf=%.1f%%",
+            // Log all detections above 10% for debugging
+            if (confidence > 0.10f) {
+                String labelName = "invalid_index";
+                if (classId >= 0 && classId < labels.size()) {
+                    labelName = labels.get(classId);
+                }
+
+                Log.d(TAG, String.format("  [%d] ClassId=%d (%s) Conf=%.1f%%",
                         i, classId, labelName, confidence * 100));
             }
         }
@@ -185,7 +211,25 @@ public class ObjectDetector {
         for (int i = 0; i < numDetectionsValue; i++) {
             float confidence = outputScores[0][i];
 
-            if (confidence > MIN_CONFIDENCE) {
+            // Only process detections above threshold
+            if (confidence >= MIN_CONFIDENCE) {
+                int classId = (int) outputClasses[0][i];
+
+                // Validate class ID
+                // Index 0 is "???" (background), so skip it
+                // Valid classes are 1-90
+                if (classId <= 0 || classId >= labels.size()) {
+                    Log.w(TAG, "⚠️ Invalid class ID: " + classId);
+                    continue;
+                }
+
+                String label = labels.get(classId);
+
+                // Skip background class
+                if (label.equals("???")) {
+                    continue;
+                }
+
                 // Bounding box: [ymin, xmin, ymax, xmax]
                 float ymin = outputLocations[0][i][0];
                 float xmin = outputLocations[0][i][1];
@@ -198,24 +242,13 @@ public class ObjectDetector {
                 xmax = Math.max(0, Math.min(1, xmax));
                 ymax = Math.max(0, Math.min(1, ymax));
 
-                // Skip invalid boxes
+                // Validate bounding box
                 if (xmax <= xmin || ymax <= ymin) {
+                    Log.w(TAG, "⚠️ Invalid bounding box for " + label);
                     continue;
                 }
 
-                // Get class
-                int classId = (int) outputClasses[0][i];
-                String label = "unknown";
-                if (classId >= 0 && classId < labels.size()) {
-                    label = labels.get(classId);
-                }
-
-                // Skip "???" and background
-                if (label.equals("???") || classId == 0) {
-                    continue;
-                }
-
-                // Convert to pixels
+                // Convert to pixels (for 300x300 input)
                 float left = xmin * INPUT_SIZE;
                 float top = ymin * INPUT_SIZE;
                 float right = xmax * INPUT_SIZE;
@@ -227,12 +260,12 @@ public class ObjectDetector {
 
                 recognitions.add(recognition);
 
-                Log.d(TAG, String.format("✅ %s (%.1f%%) [ClassId=%d]",
+                Log.d(TAG, String.format("✅ VALID: %s (%.1f%%) [ClassId=%d]",
                         label, confidence * 100, classId));
             }
         }
 
-        // Sort by confidence
+        // Sort by confidence (highest first)
         Collections.sort(recognitions, new Comparator<Recognition>() {
             @Override
             public int compare(Recognition r1, Recognition r2) {
@@ -240,8 +273,12 @@ public class ObjectDetector {
             }
         });
 
-        Log.d(TAG, "📊 Final detections: " + recognitions.size());
+        Log.d(TAG, "📊 FINAL RESULT: " + recognitions.size() + " valid detections");
         return recognitions;
+    }
+
+    public boolean isReady() {
+        return isReady;
     }
 
     public void close() {
@@ -249,10 +286,14 @@ public class ObjectDetector {
             tflite.close();
             tflite = null;
         }
+        isReady = false;
+        Log.d(TAG, "🔒 ObjectDetector closed");
     }
+
     public int getLabelsCount() {
         return labels.size();
     }
+
     public static class Recognition {
         private final String id;
         private final String title;
@@ -266,10 +307,21 @@ public class ObjectDetector {
             this.location = location;
         }
 
-        public String getId() { return id; }
-        public String getTitle() { return title; }
-        public float getConfidence() { return confidence; }
-        public RectF getLocation() { return new RectF(location); }
+        public String getId() {
+            return id;
+        }
+
+        public String getTitle() {
+            return title;
+        }
+
+        public float getConfidence() {
+            return confidence;
+        }
+
+        public RectF getLocation() {
+            return new RectF(location);
+        }
 
         @Override
         public String toString() {

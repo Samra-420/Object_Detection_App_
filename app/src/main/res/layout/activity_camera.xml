@@ -1,109 +1,166 @@
 <?xml version="1.0" encoding="utf-8"?>
-<RelativeLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
-    android:background="#121212">
+    android:orientation="vertical"
+    android:background="#F0F9FF">
+
+    <!-- Top Header with Title -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:background="#3B82F6"
+        android:padding="16dp"
+        android:elevation="4dp">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Live Detection"
+            android:textColor="#FFFFFF"
+            android:textSize="24sp"
+            android:textStyle="bold"
+            android:layout_gravity="center" />
+
+        <TextView
+            android:id="@+id/status_text"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Initializing camera..."
+            android:textColor="#E0F2FE"
+            android:textSize="12sp"
+            android:layout_gravity="center"
+            android:layout_marginTop="4dp" />
+    </LinearLayout>
 
     <!-- Camera Preview -->
     <androidx.camera.view.PreviewView
         android:id="@+id/preview_view"
         android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        app:scaleType="fitCenter" />
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:background="#000000" />
 
-    <!-- Top Bar -->
+    <!-- Control Buttons -->
     <LinearLayout
+        android:id="@+id/controlLayout"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_alignParentTop="true"
-        android:orientation="vertical"
-        android:background="#80000000"
-        android:padding="12dp">
+        android:orientation="horizontal"
+        android:padding="16dp"
+        android:background="#FFFFFF"
+        android:gravity="center"
+        android:elevation="2dp">
+
+        <!-- Back Button -->
+        <Button
+            android:id="@+id/back_button"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1"
+            android:text="Back"
+            android:textSize="14sp"
+            android:backgroundTint="#6366F1"
+            android:textColor="#FFFFFF"
+            android:layout_marginEnd="8dp" />
+
+        <!-- Start/Stop Detection Button -->
+        <Button
+            android:id="@+id/toggle_button"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1.5"
+            android:text="Start"
+            android:textSize="14sp"
+            android:backgroundTint="#10B981"
+            android:textColor="#FFFFFF"
+            android:layout_marginStart="4dp"
+            android:layout_marginEnd="4dp" />
+
+        <!-- Debug Button -->
+        <Button
+            android:id="@+id/debug_button"
+            android:layout_width="0dp"
+            android:layout_height="50dp"
+            android:layout_weight="1"
+            android:text="Debug"
+            android:textSize="14sp"
+            android:backgroundTint="#F59E0B"
+            android:textColor="#FFFFFF"
+            android:layout_marginStart="8dp" />
+    </LinearLayout>
+
+    <!-- Detection Results Card -->
+    <com.google.android.material.card.MaterialCardView
+        android:id="@+id/resultCard"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:layout_margin="16dp"
+        app:cardCornerRadius="16dp"
+        app:cardElevation="6dp"
+        app:cardBackgroundColor="#FFFFFF">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:orientation="horizontal"
-            android:gravity="center_vertical">
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:padding="16dp">
 
-            <Button
-                android:id="@+id/back_button"
-                android:layout_width="wrap_content"
+            <!-- Title with Icon -->
+            <LinearLayout
+                android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:text="⬅ Back"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#FF5722"
-                android:padding="8dp"
-                style="?android:attr/borderlessButtonStyle" />
+                android:orientation="horizontal"
+                android:gravity="center_vertical"
+                android:layout_marginBottom="12dp">
 
-            <TextView
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
+                <TextView
+                    android:layout_width="0dp"
+                    android:layout_height="wrap_content"
+                    android:layout_weight="1"
+                    android:text="🔍 Detection Results"
+                    android:textColor="#1E40AF"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/history_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text=""
+                    android:textColor="#6B7280"
+                    android:textSize="11sp"
+                    android:textStyle="italic" />
+            </LinearLayout>
+
+            <!-- Divider -->
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="2dp"
+                android:background="#E5E7EB"
+                android:layout_marginBottom="12dp" />
+
+            <!-- Result Text with ScrollView -->
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="0dp"
                 android:layout_weight="1"
-                android:text="Object Detection"
-                android:textColor="#FFFFFF"
-                android:textSize="18sp"
-                android:textStyle="bold"
-                android:gravity="center"
-                android:padding="8dp" />
+                android:fillViewport="true">
 
-            <Button
-                android:id="@+id/debug_button"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:text="Debug"
-                android:textColor="#FFFFFF"
-                android:backgroundTint="#2196F3"
-                android:padding="8dp"
-                style="?android:attr/borderlessButtonStyle" />
-
+                <TextView
+                    android:id="@+id/result_text"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="Press 'Start Detection' to begin.\n\nCamera will scan for objects when activated."
+                    android:textColor="#374151"
+                    android:textSize="14sp"
+                    android:lineSpacingExtra="4dp"
+                    android:padding="8dp" />
+            </ScrollView>
         </LinearLayout>
+    </com.google.android.material.card.MaterialCardView>
 
-        <TextView
-            android:id="@+id/status_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Initializing..."
-            android:textColor="#4CAF50"
-            android:textSize="14sp"
-            android:gravity="center"
-            android:padding="4dp" />
-
-    </LinearLayout>
-
-    <!-- Results Panel -->
-    <LinearLayout
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:layout_alignParentBottom="true"
-        android:orientation="vertical"
-        android:background="#80000000"
-        android:padding="16dp">
-
-        <TextView
-            android:id="@+id/result_text"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Ready for detection"
-            android:textColor="#FFFFFF"
-            android:textSize="16sp"
-            android:padding="12dp"
-            android:background="#40000000"
-            android:maxLines="10"
-            android:ellipsize="end" />
-
-        <Button
-            android:id="@+id/toggle_button"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:text="Start Detection"
-            android:textSize="18sp"
-            android:padding="16dp"
-            android:backgroundTint="#4CAF50"
-            android:textColor="#FFFFFF"
-            android:layout_marginTop="8dp" />
-
-    </LinearLayout>
-
-</RelativeLayout>
+</LinearLayout>
