@@ -53,21 +53,6 @@ The application includes the following screens:
 
 ---
 
-## 📂 Project Structure
-SmartObjectDetectionAssistant/
-│
-├── app/
-│ ├── java/
-│ ├── res/
-│ └── assets/
-│ ├── detect.tflite
-│ └── labelmap.txt
-│
-├── screenshots/
-├── README.md
-└── build.gradle
-
----
 
 ## 🧪 Results
 The application successfully detects common objects such as persons, bottles, chairs, and mobile phones in real time.  
